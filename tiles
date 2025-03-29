@@ -1,0 +1,191 @@
+#pip install scikit-learn Pillow cairo
+import math, cmath, cairo, numpy as np
+from sklearn.cluster import KMeans
+from PIL import Image
+
+def print_rgb(text, r, g, b):
+    r = int(r*255)
+    g = int(g*255)
+    b = int(b*255)
+    print(f"\033[38;2;{r};{g};{b}m{text}\033[0m")
+
+
+def find_closest_color(color, palette):
+    distances = np.linalg.norm(palette - color, axis=1)  # Euclidean distance
+    return np.argmin(distances)
+
+def open_image(path):
+    image = Image.open(path)
+    rgb = image.convert('RGB')
+    rgb = np.array(rgb)
+    return rgb.transpose(1,0,2)
+
+def is_point_in_triangle(px, py, x1, y1, x2, y2, x3, y3):
+    # Compute barycentric coordinates
+    denominator = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    alpha = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / denominator
+    beta = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denominator
+    gamma = 1 - alpha - beta
+
+    # Check if the point is inside the triangle
+    return alpha >= 0 and beta >= 0 and gamma >= 0
+
+def get_overlapping_pixels(x1, y1, x2, y2, x3, y3, image):
+    #overlapping_pixels = []
+
+    # Determine bounding box
+    x_min = min(x1, x2, x3)
+    x_max = max(x1, x2, x3)
+    y_min = min(y1, y2, y3)
+    y_max = max(y1, y2, y3)
+    return image[x_min:x_max+1, y_min:y_max+1, :]
+
+def get_average_color(patch):
+    color = np.mean(patch, axis=(0,1))
+    color = color / 255
+    return color
+'''
+    # Iterate over bounding box
+    for y in range(max(0, y_min), min(height, y_max + 1)):
+        for x in range(max(0, x_min), min(width, x_max + 1)):
+            if is_point_in_triangle(x, y, x1, y1, x2, y2, x3, y3):
+                overlapping_pixels.append((x, y))
+
+    return overlapping_pixels
+'''
+def convertToCartesian(v, width,height):
+    x = int(((v.real + 1)/2)*width)
+    y = int(((v.imag + 1)/2)*height)
+    return x,y
+
+def getColorForRhombus(v1, v2, v3, image):
+    width,height = image.shape[0],image.shape[1]
+    x1,y1 = convertToCartesian(v1, width,height)
+    x2,y2 = convertToCartesian(v2, width,height)
+    x3,y3 = convertToCartesian(v3, width,height)
+
+    patch = get_overlapping_pixels(x1,y1,x2,y2,x3,y3,image)
+    return get_average_color(patch)
+
+def getTopKColors(colorCount,colors,everyOther):
+    kmeans = KMeans(n_clusters=colorCount, n_init=10)
+    kmeans.fit(colors)
+    dominant = kmeans.cluster_centers_
+    return dominant[::everyOther]
+
+def main(image_path, everyOther, divisions, colorCount, scale):
+    pixels = open_image(image_path)
+    r1,r2 = pixels.shape[0], pixels.shape[1]
+
+    base = 5  # Eventuall, more bases will be supported (meaning instead of based on five, based on 7 or something)
+
+    # Canvas setup
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, r1, r2)
+    ctx = cairo.Context(surface)
+    #ctx.scale(pixels.shape[0],pixels.shape[1])
+    ctx.scale(max(r1, r2) / scale, max(r1, r2) / scale)
+    ctx.translate(0.5 * scale, 0.5 * scale)  # Center the drawing
+
+    # Create first layer of triangl8
+
+    triangles = []
+    for i in range(base * 2):
+        v2 = cmath.rect(1, (2 * i - 1) * math.pi / (base * 2))
+        v3 = cmath.rect(1, (2 * i + 1) * math.pi / (base * 2))
+
+        if i % 2 == 0:
+            v2, v3 = v3, v2  # Mirror every other trianglex
+
+        triangles.append(("thin", 0, v2, v3,[]))
+
+    phi = (5 ** 0.5 + 1) / 2  # Golden ratio
+
+    for i in range(divisions):
+        new_triangles = []
+
+        for shape, v1, v2, v3,_  in triangles:
+            if shape == "thin":
+                # Divide thin rhombus
+                p1 = v1 + (v2 - v1) / phi
+                new_triangles += [("thin", v3, p1, v2, []), ("thicc", p1, v3, v1,[])]
+            else:
+                # Divide thicc rhombus
+                p2 = v2 + (v1 - v2) / phi
+                p3 = v2 + (v3 - v2) / phi
+                new_triangles += [("thicc", p3, v3, v1,[]), ("thicc", p2, p3, v2, []), ("thin", p3, p2, v1,[])]
+
+            triangles = new_triangles
+
+    colors = []
+
+    # Draw thin rhombi
+    for i,_ in enumerate(triangles):
+        shape,v1,v2,v3,_ = triangles[i]
+        color = getColorForRhombus(v1,v2,v3,pixels)
+        colors.append(color)
+        triangles[i] = (shape,v1,v2,v3,color)
+
+    topColors = getTopKColors(colorCount,colors,everyOther)
+    color_count_dict = {key: 0 for key in range(colorCount)}
+
+    # Draw thin rhombi
+    for shape, v1, v2, v3, color in triangles:
+        if shape == "thin":
+            ctx.move_to(v1.real, v1.imag)
+            ctx.line_to(v2.real, v2.imag)
+            ctx.line_to(v3.real, v3.imag)
+            ctx.close_path()
+
+            idx = find_closest_color(color,topColors )
+            newColor = topColors[idx]
+            color_count_dict[idx] += 1
+
+            ctx.set_source_rgb(newColor[0], newColor[1], newColor[2])
+            ctx.fill()
+
+    # Draw thicc rhombi
+    for shape, v1, v2, v3, color in triangles:
+        if shape == "thicc":
+            ctx.move_to(v1.real, v1.imag)
+            ctx.line_to(v2.real, v2.imag)
+            ctx.line_to(v3.real, v3.imag)
+            ctx.close_path()
+
+            idx = find_closest_color(color,topColors)
+            newColor = topColors[idx]
+            color_count_dict[idx] += 1
+
+            ctx.set_source_rgb(newColor[0], newColor[1], newColor[2])
+            ctx.fill()
+
+    # Determine line width
+    shape, v1, v2, v3,_ = triangles[0]
+    ctx.set_line_width(abs(v2 - v1) / (base * 2))
+    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+
+    # Draw outlines
+    for shape, v1, v2, v3, _ in triangles:
+        ctx.move_to(v2.real, v2.imag)
+        ctx.line_to(v1.real, v1.imag)
+        ctx.line_to(v3.real, v3.imag)
+
+    ctx.set_source_rgb(colors[2][0], colors[2][1], colors[2][2])
+    ctx.set_line_width(divisions ** -3) if divisions > 3 else ctx.set_line_width(divisions ** -5)
+    ctx.stroke()
+
+    filename  = f"count{len(triangles)}_div{divisions}_color{colorCount}.png"
+    surface.write_to_png(filename)
+    Image.open(filename).show()
+
+    for i, currentColor in enumerate(topColors):
+        count = color_count_dict[i]
+        print_rgb(f"▬ {count}",currentColor[0],currentColor[1],currentColor[2])
+
+
+IMAGE_PATH = 'X:\\temp\\parrot.jpg'
+colorCount = 7 #количество цветов
+everyOther = 1 #из списка самых распространенных цветов выбирать каждый n-й (все подряд/каждый второй/каждый третий и тд)
+divisions = 6 #количество делений мозаики
+scale = 2 #масштаб, из изначального скрипта
+
+main(IMAGE_PATH, everyOther, divisions, colorCount, scale)
