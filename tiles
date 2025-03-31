@@ -73,7 +73,7 @@ def getTopKColors(colorCount,colors,everyOther):
     dominant = kmeans.cluster_centers_
     return dominant[::everyOther]
 
-def main(image_path, everyOther, divisions, colorCount, scale):
+def main(image_path, everyOther, divisions, colorCount, scale,line_modifier):
     pixels = open_image(image_path)
     r1,r2 = pixels.shape[0], pixels.shape[1]
 
@@ -99,6 +99,7 @@ def main(image_path, everyOther, divisions, colorCount, scale):
         triangles.append(("thin", 0, v2, v3,[]))
 
     phi = (5 ** 0.5 + 1) / 2  # Golden ratio
+
 
     for i in range(divisions):
         new_triangles = []
@@ -126,7 +127,9 @@ def main(image_path, everyOther, divisions, colorCount, scale):
         triangles[i] = (shape,v1,v2,v3,color)
 
     topColors = getTopKColors(colorCount,colors,everyOther)
-    color_count_dict = {key: 0 for key in range(colorCount)}
+
+    thin_color_count_dict = {key: 0 for key in range(colorCount)}
+    thick_color_count_dict = {key: 0 for key in range(colorCount)}
 
     # Draw thin rhombi
     for shape, v1, v2, v3, color in triangles:
@@ -138,10 +141,11 @@ def main(image_path, everyOther, divisions, colorCount, scale):
 
             idx = find_closest_color(color,topColors )
             newColor = topColors[idx]
-            color_count_dict[idx] += 1
+            thin_color_count_dict [idx] += 1
 
             ctx.set_source_rgb(newColor[0], newColor[1], newColor[2])
             ctx.fill()
+
 
     # Draw thicc rhombi
     for shape, v1, v2, v3, color in triangles:
@@ -153,7 +157,7 @@ def main(image_path, everyOther, divisions, colorCount, scale):
 
             idx = find_closest_color(color,topColors)
             newColor = topColors[idx]
-            color_count_dict[idx] += 1
+            thick_color_count_dict[idx] += 1
 
             ctx.set_source_rgb(newColor[0], newColor[1], newColor[2])
             ctx.fill()
@@ -170,22 +174,52 @@ def main(image_path, everyOther, divisions, colorCount, scale):
         ctx.line_to(v3.real, v3.imag)
 
     ctx.set_source_rgb(colors[2][0], colors[2][1], colors[2][2])
-    ctx.set_line_width(divisions ** -3) if divisions > 3 else ctx.set_line_width(divisions ** -5)
+    line_width = divisions ** -3 if divisions > 3 else ctx.set_line_width(divisions ** -5)
+
+    ctx.set_line_width(line_width*line_modifier)
     ctx.stroke()
 
     filename  = f"count{len(triangles)}_div{divisions}_color{colorCount}.png"
     surface.write_to_png(filename)
     Image.open(filename).show()
 
-    for i, currentColor in enumerate(topColors):
-        count = color_count_dict[i]
-        print_rgb(f"▬ {count}",currentColor[0],currentColor[1],currentColor[2])
+    def list_count(dictionary):
+        for i, currentColor in enumerate(topColors):
+            count = dictionary[i]
+            print_rgb(f"▬ {count}", currentColor[0], currentColor[1], currentColor[2])
+
+    def get_total_piece_count(dictionary):
+        sum = 0
+        for colorCount in dictionary.values():
+            sum = sum + colorCount
+        return sum
+
+    thin_piece_count = get_total_piece_count(thin_color_count_dict)
+    thick_piece_count = get_total_piece_count(thick_color_count_dict)
+
+    print("====================")
+    print(f"Цветов: {colorCount}")
+    print(f"Делений: {divisions}")
+    print("====================")
+
+    print("Тонких деталей")
+    list_count(thin_color_count_dict)
+    print(f"Всего тонких деталей: {thin_piece_count}")
+    print("----------")
+
+    print("Толстых деталей")
+    list_count(thick_color_count_dict)
+    print(f"Всего толстых деталей: {thick_piece_count}")
+    print("----------")
+
+    print(f"Всего деталей: {thin_piece_count+thick_piece_count}")
 
 
 IMAGE_PATH = 'X:\\temp\\parrot.jpg'
-colorCount = 7 #количество цветов
-everyOther = 1 #из списка самых распространенных цветов выбирать каждый n-й (все подряд/каждый второй/каждый третий и тд)
-divisions = 6 #количество делений мозаики
-scale = 2 #масштаб, из изначального скрипта
+colorCount = 7 # количество цветов
+everyOther = 1 # из списка самых распространенных цветов выбирать каждый n-й (все подряд/каждый второй/каждый третий и тд)
+divisions = 8 # количество делений мозаики
+scale = 2 # масштаб, из изначального скрипта
+lineModifier = 0.1 # коэффициент толщины линий между элементами (0.001..0.9)
 
-main(IMAGE_PATH, everyOther, divisions, colorCount, scale)
+main(IMAGE_PATH, everyOther, divisions, colorCount, scale,lineModifier)
